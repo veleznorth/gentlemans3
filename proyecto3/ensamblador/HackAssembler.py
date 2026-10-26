@@ -149,9 +149,9 @@ def translate_cli(translator, input_suffix: str, output_suffix: str, description
         with output.open('w' if args.force else 'x', encoding='utf-8', newline='\n') as file:
             file.write(result)
     except FileExistsError:
-        parser.exit(1, f'Error: {output} ya existe; usa -o o --force.\n')
+        parser.exit(1, f'ERROR *** {output} ya existe; usa -o o --force.\n')
     except (OSError, ValueError) as error:
-        parser.exit(1, f'Error: {error}\n')
+        parser.exit(1, f'ERROR *** {error}\n')
     print(f'{args.input} -> {output} ({len(result.splitlines())} instrucciones)')
 
 
@@ -171,7 +171,7 @@ def assemble(source: str) -> str:
                     raise ValueError('programa demasiado grande para ROM32K')
                 address += 1
         except ValueError as error:
-            raise ValueError(f'línea {instruction.line}: {error}') from None
+            raise ValueError(f'Línea {instruction.line}: {error}') from None
 
     result = []
     # Segunda pasada: asignar variables y emitir instrucciones de 16 bits.
@@ -190,7 +190,7 @@ def assemble(source: str) -> str:
                 dest, comp, jump = instruction.fields()
                 result.append('111' + encode_comp(comp) + encode_dest(dest) + encode_jump(jump))
         except ValueError as error:
-            raise ValueError(f'línea {instruction.line}: {error}') from None
+            raise ValueError(f'Línea {instruction.line}: {error}') from None
     return ''.join(line + '\n' for line in result)
 
 
