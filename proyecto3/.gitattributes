@@ -1,0 +1,7 @@
+# Los archivos de prueba se guardan tal cual (algunos son CRLF a propósito,
+# otros LF o sin salto de línea final): Git no debe convertirlos.
+pruebas/** -text
+# Los scripts deben tener fin de línea LF para que Git Bash los ejecute
+# aunque Windows tenga core.autocrlf=true.
+*.sh text eol=lf
+*.py text eol=lf

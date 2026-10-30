@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Salidas generadas al ejecutar las pruebas (se regeneran con los scripts)
+pruebas/ensamblador/*.hack
+pruebas/desensamblador/*Dis.asm
+pruebas/desensamblador/*Dis.hack
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

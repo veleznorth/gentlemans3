@@ -1,19 +1,27 @@
-"""Avance del trabajo 3: desensamblador Hack.
+"""Desensamblador para la plataforma Hack.
 
-Uso: python3 HackDisassembler.py Prog.hack [-o Prog.asm] [--force]
-Traduce instrucciones binarias de 16 bits a mnemonicos A/C y genera
-etiquetas de salto automaticamente (seccion 9.1): cuando una
-instruccion @valor es seguida de una instruccion C con salto no vacio,
-"valor" se trata como direccion destino: se reemplaza por una etiqueta
-Lk y se inserta "(Lk)" antes de la instruccion ubicada en esa direccion.
+Uso:  python3 HackDisassembler.py ruta/Prog.hack
+Genera ruta/ProgDis.asm, que al ensamblarse produce exactamente Prog.hack.
+
+Etapas:
+  1. read_words(): valida cada línea en orden (longitud, caracteres,
+     bits 14-13 y código de cómputo) y decodifica la instrucción.
+  2. find_labels(): aplica la regla 9.1 del enunciado. Si la instrucción i
+     es C con salto y la i-1 es A con valor v <= n, v es un destino de salto
+     y recibe una única etiqueta (L0, L1, ... en orden de dirección).
+  3. disassemble(): emite el programa insertando (Lk) antes de la
+     instrucción v (o al final si v = n) y escribiendo @Lk en la i-1.
+
+Ante un error imprime en la salida estándar
+    ERROR *** Línea N: <mensaje>
+no genera el archivo de salida y termina con código 1.
 """
 
-import re
-import argparse
-from dataclasses import dataclass
-from pathlib import Path
+import os
+import sys
 
-COMP_REV = {
+# Tablas inversas de la especificación (sección 7.2 del enunciado).
+COMP = {
     '0101010': '0', '0111111': '1', '0111010': '-1',
     '0001100': 'D', '0110000': 'A', '1110000': 'M',
     '0001101': '!D', '0110001': '!A', '1110001': '!M',
@@ -26,122 +34,151 @@ COMP_REV = {
     '0000000': 'D&A', '1000000': 'D&M',
     '0010101': 'D|A', '1010101': 'D|M',
 }
-DEST_REV = {'000': '', '001': 'M', '010': 'D', '011': 'MD',
-            '100': 'A', '101': 'AM', '110': 'AD', '111': 'AMD'}
-JUMP_REV = {'000': '', '001': 'JGT', '010': 'JEQ', '011': 'JGE',
-            '100': 'JLT', '101': 'JNE', '110': 'JLE', '111': 'JMP'}
-
-BIT16 = re.compile(r'[01]{16}\Z')
+DEST = {'000': '', '001': 'M', '010': 'D', '011': 'MD',
+        '100': 'A', '101': 'AM', '110': 'AD', '111': 'AMD'}
+JUMP = {'000': '', '001': 'JGT', '010': 'JEQ', '011': 'JGE',
+        '100': 'JLT', '101': 'JNE', '110': 'JLE', '111': 'JMP'}
 
 
-def decode_comp(bits: str) -> str:
-    try:
-        return COMP_REV[bits]
-    except KeyError:
-        raise ValueError(f'campo comp invalido: {bits!r}') from None
+class HackError(Exception):
+    def __init__(self, line, message):
+        super().__init__(message)
+        self.line = line
+        self.message = message
 
 
-@dataclass(frozen=True)
-class Word:
-    line: int
-    bits: str
-
-    def kind(self) -> str:
-        return 'A' if self.bits[0] == '0' else 'C'
-
-    def a_value(self) -> int:
-        return int(self.bits[1:], 2)
-
-    def c_fields(self) -> tuple[str, str, str]:
-        comp_bits = self.bits[3] + self.bits[4:10]
-        dest = DEST_REV[self.bits[10:13]]
-        jump = JUMP_REV[self.bits[13:16]]
-        return dest, decode_comp(comp_bits), jump
+class AInstruction:
+    def __init__(self, value):
+        self.value = value
 
 
-class BinaryParser:
-    def __init__(self, source: str):
-        self.words = []
-        for number, raw in enumerate(source.splitlines(), 1):
-            text = raw.strip()
-            if not text:
-                continue
-            if not BIT16.fullmatch(text):
-                raise ValueError(f'Linea {number}: instruccion invalida: {text!r}')
-            self.words.append(Word(number, text))
+class CInstruction:
+    def __init__(self, dest, comp, jump):
+        self.dest, self.comp, self.jump = dest, comp, jump
 
-    def __iter__(self):
-        return iter(self.words)
+    def text(self):
+        result = f'{self.dest}={self.comp}' if self.dest else self.comp
+        return f'{result};{self.jump}' if self.jump else result
 
 
-def disassemble(source: str) -> str:
-    words = list(BinaryParser(source))
+def split_lines(source):
+    """Líneas del archivo con fin de línea LF o CRLF.
 
-    # Primera pasada: detectar pares (@valor, instruccion C con salto) y
-    # asignar etiquetas Lk a cada direccion destino, en orden de aparicion.
-    labels_by_address: dict[int, str] = {}
-    is_jump_source = [False] * len(words)
+    Solo se quita el '\\r' final de cada línea y un único salto de línea al
+    final del archivo (es opcional). Todo lo demás, incluidas líneas vacías y
+    espacios, se conserva para que la validación lo detecte.
+    """
+    if source.startswith('\ufeff'):   # BOM de UTF-8 (Bloc de notas)
+        source = source[1:]
+    lines = [l[:-1] if l.endswith('\r') else l for l in source.split('\n')]
+    if lines and lines[-1] == '':
+        lines.pop()
+    return lines
+
+
+def decode(bits, line):
+    """Valida una línea y la convierte en AInstruction o CInstruction."""
+    if not bits:
+        raise HackError(line, 'línea vacía (se esperaba una instrucción de 16 bits)')
+    if len(bits) != 16:
+        extra = ' (revise espacios al final)' if bits.rstrip() != bits else ''
+        raise HackError(line, f'la instrucción tiene {len(bits)} caracteres; '
+                              f'se esperaban exactamente 16{extra}')
+    for position, char in enumerate(bits, 1):
+        if char not in '01':
+            raise HackError(line, f"carácter inválido {char!r} en la posición {position} "
+                                  f"(solo se permiten 0 y 1)")
+    if bits[0] == '0':
+        return AInstruction(int(bits[1:], 2))
+    if bits[1:3] != '11':
+        raise HackError(line, f"instrucción C con bits 14-13 = '{bits[1:3]}' (deben ser '11')")
+    comp_bits = bits[3:10]
+    if comp_bits not in COMP:
+        raise HackError(line, f"código de cómputo inválido a={comp_bits[0]} "
+                              f"c1..c6={comp_bits[1:]}")
+    return CInstruction(DEST[bits[10:13]], COMP[comp_bits], JUMP[bits[13:16]])
+
+
+def read_words(source):
+    """Valida todas las líneas en orden; el primer error detiene el proceso."""
+    return [decode(bits, number) for number, bits in enumerate(split_lines(source), 1)]
+
+
+def find_labels(words):
+    """Regla 9.1. Devuelve (etiquetas por dirección, índices de @ que saltan)."""
+    n = len(words)
+    targets = set()         # direcciones destino (sin repetir)
+    jump_sources = set()    # índices i-1 que deben escribirse como @Lk
+    for i in range(1, n):
+        current, previous = words[i], words[i - 1]
+        if (isinstance(current, CInstruction) and current.jump
+                and isinstance(previous, AInstruction) and previous.value <= n):
+            targets.add(previous.value)
+            jump_sources.add(i - 1)
+    # Una única etiqueta por dirección, numeradas en orden de dirección
+    # (L0 es el destino más bajo), así aparecen L0, L1, ... en el archivo.
+    labels = {address: f'L{k}' for k, address in enumerate(sorted(targets))}
+    return labels, jump_sources
+
+
+def disassemble(source):
+    words = read_words(source)
+    labels, jump_sources = find_labels(words)
+    out = []
     for index, word in enumerate(words):
-        if word.kind() != 'A':
-            continue
-        if index + 1 >= len(words) or words[index + 1].kind() != 'C':
-            continue
-        try:
-            _, _, jump = words[index + 1].c_fields()
-        except ValueError as error:
-            raise ValueError(f'Linea {words[index + 1].line}: {error}') from None
-        if not jump:
-            continue
-        address = word.a_value()
-        if address not in labels_by_address:
-            labels_by_address[address] = f'L{len(labels_by_address)}'
-        is_jump_source[index] = True
-
-    # Segunda pasada: emitir mnemonicos, insertando "(Lk)" antes de la
-    # instruccion en esa direccion y sustituyendo "@valor" por "@Lk".
-    result = []
-    for index, word in enumerate(words):
-        if index in labels_by_address:
-            result.append(f'({labels_by_address[index]})')
-        if word.kind() == 'A':
-            value = word.a_value()
-            if is_jump_source[index]:
-                result.append(f'@{labels_by_address[value]}')
+        if index in labels:
+            out.append(f'({labels[index]})')
+        if isinstance(word, AInstruction):
+            if index in jump_sources:
+                out.append(f'@{labels[word.value]}')
             else:
-                result.append(f'@{value}')
+                out.append(f'@{word.value}')
         else:
-            try:
-                dest, comp, jump = word.c_fields()
-            except ValueError as error:
-                raise ValueError(f'Linea {word.line}: {error}') from None
-            text = comp if not dest else f'{dest}={comp}'
-            if jump:
-                text += f';{jump}'
-            result.append(text)
-    return ''.join(line + '\n' for line in result)
+            out.append(word.text())
+    if len(words) in labels:            # destino v = n: etiqueta al final
+        out.append(f'({labels[len(words)]})')
+    return out
 
 
-def translate_cli(translator, input_suffix: str, output_suffix: str, description: str):
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument('input', type=Path, help=f'archivo {input_suffix}')
-    parser.add_argument('-o', '--output', type=Path, help='ruta del archivo de salida')
-    parser.add_argument('--force', action='store_true', help='permitir reemplazar una salida existente')
-    args = parser.parse_args()
-    output = args.output or args.input.with_suffix(output_suffix)
+def remove_if_exists(path):
     try:
-        if args.input.suffix.lower() != input_suffix:
-            raise ValueError(f'la entrada debe tener extension {input_suffix}')
-        if args.input.resolve() == output.resolve():
-            raise ValueError('la salida debe ser distinta de la entrada')
-        result = translator(args.input.read_text(encoding='utf-8-sig'))
-        with output.open('w' if args.force else 'x', encoding='utf-8', newline='\n') as file:
-            file.write(result)
-    except FileExistsError:
-        parser.exit(1, f'ERROR *** {output} ya existe; usa -o o --force.\n')
-    except (OSError, ValueError) as error:
-        parser.exit(1, f'ERROR *** {error}\n')
-    print(f'{args.input} -> {output} ({len(result.splitlines())} instrucciones)')
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def main(argv):
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if len(argv) != 2:
+        print('ERROR *** Uso: desensamblador.sh ruta/Prog.hack')
+        return 2
+    input_path = argv[1]
+    base, extension = os.path.splitext(input_path)
+    if extension.lower() != '.hack':
+        print(f"ERROR *** El archivo de entrada debe tener extensión .hack: '{input_path}'")
+        return 2
+    output_path = base + 'Dis.asm'
+
+    try:
+        with open(input_path, 'rb') as file:
+            source = file.read().decode('utf-8', errors='replace')
+    except OSError as error:
+        print(f"ERROR *** No se pudo leer el archivo '{input_path}': {error.strerror}")
+        return 1
+
+    try:
+        lines = disassemble(source)
+    except HackError as error:
+        print(f'ERROR *** Línea {error.line}: {error.message}')
+        remove_if_exists(output_path)   # nunca dejar una salida de una corrida anterior
+        return 1
+
+    with open(output_path, 'w', encoding='ascii', newline='\n') as file:
+        file.write(''.join(line + '\n' for line in lines))
+    print(f'{input_path} -> {output_path} ({len(lines)} líneas)')
+    return 0
 
 
 if __name__ == '__main__':
-    translate_cli(disassemble, '.hack', '.asm', 'Desensamblador Hack')
+    sys.exit(main(sys.argv))
