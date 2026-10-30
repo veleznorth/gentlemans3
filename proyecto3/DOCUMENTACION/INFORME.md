@@ -6,9 +6,9 @@ Organización de Computadores 2026-2 · Grupo **gentlemans**
 
 | Integrante | Aportes |
 |---|---|
-| _Nombre completo 1_ | _p. ej. Parser y tablas del ensamblador, casos de error 10.1_ |
-| _Nombre completo 2_ | _p. ej. Tabla de símbolos y dos pasadas, pruebas válidas del ensamblador_ |
-| _Nombre completo 3_ | _p. ej. Desensamblador, generación de etiquetas, errores 10.2, documentación_ |
+| Sebastián Sánchez Gómez | Versión final del ensamblador y del desensamblador según el enunciado (validación de errores en orden de líneas, regla 9.1 de etiquetas, salida CRLF), `_python.sh`, programas de prueba propios y casos de error, `README.md` e `INFORME.md`. |
+| Mathías Vélez Londoño | Primer avance del ensamblador en Python (tablas `COMP`/`DEST`/`JUMP`, análisis de instrucciones A y C, tabla de símbolos y dos pasadas) y pendientes iniciales del trabajo. |
+| Cristóbal Machado Sánchez | Estructura de `proyecto3/` y primeros scripts de ejecución, primera versión del desensamblador con generación de etiquetas (reemplazada por la versión final), ajuste del formato de errores, revisión del código contra el enunciado, pruebas con el material de apoyo y publicación de la versión final en el repositorio. |
 
 ## 2. Arquitectura de la solución
 

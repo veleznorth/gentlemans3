@@ -9,9 +9,9 @@ Ensamblador (`.asm` → `.hack`, Proyecto 6 de Nand2Tetris) y desensamblador
 
 | Nombre | Usuario Git |
 |---|---|
-| _Nombre completo 1_ | _usuario1_ |
-| _Nombre completo 2_ | _usuario2_ |
-| _Nombre completo 3_ | _usuario3_ |
+| Sebastián Sánchez Gómez | thesmagicc |
+| Mathías Vélez Londoño | veleznorth |
+| Cristóbal Machado Sánchez | Cmachados |
 
 ## Compilación y ejecución
 
